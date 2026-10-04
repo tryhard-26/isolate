@@ -431,3 +431,34 @@ TEST(lifecycle, run_count_and_last_status_are_recorded) {
     CHECK_EQ(parsed.at("run_count").as_int(), int64_t(2));
     CHECK_EQ(parsed.at("last_exit_code").as_int(), int64_t(7));
 }
+
+TEST(lifecycle, gc_removes_stopped_ephemeral_capsules) {
+    Environment env;
+    CHECK(env.isolate({"run", "--ephemeral", "--keep", "--", "/usr/bin/true"}).ok());
+    CHECK(!env.isolate({"ls"}).out_contains("no capsules"));
+
+    Run dry = env.isolate({"gc", "--dry-run"});
+    CHECK(dry.ok());
+    CHECK(dry.out_contains("would prune 1 capsule"));
+
+    Run pruned = env.isolate({"gc"});
+    CHECK(pruned.ok());
+    CHECK(pruned.out_contains("pruned 1 capsule"));
+    CHECK(env.isolate({"ls"}).out_contains("no capsules"));
+}
+
+TEST(lifecycle, gc_all_removes_stopped_persistent_capsules) {
+    Environment env;
+    CHECK(env.isolate({"run", "--name", "pers1", "--", "/usr/bin/true"}).ok());
+    CHECK(env.isolate({"run", "--name", "pers2", "--", "/usr/bin/true"}).ok());
+
+    Run dry = env.isolate({"gc", "--all", "--dry-run"});
+    CHECK(dry.ok());
+    CHECK(dry.out_contains("would prune 2 capsules"));
+
+    Run pruned = env.isolate({"gc", "--all"});
+    CHECK(pruned.ok());
+    CHECK(pruned.out_contains("pruned 2 capsules"));
+    CHECK(!pruned.err_contains("warning"));
+    CHECK(env.isolate({"ls"}).out_contains("no capsules"));
+}

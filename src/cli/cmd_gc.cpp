@@ -9,6 +9,9 @@
 #include "util/path.h"
 #include "util/str.h"
 
+#include "proc/tracker.h"
+#include "sb/tag.h"
+
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/file.h>
@@ -65,6 +68,12 @@ int cmd_gc(const Options& options, Store& store) {
             capsule->save_state();
         }
 
+        // Do not prune if processes belonging to capsule are still alive
+        proc::Tracker tracker(sb::membership_name(spec.id), 0);
+        if (!tracker.scan().empty()) {
+            continue;
+        }
+
         int64_t last_time = state.finished_at > 0 ? state.finished_at : spec.created_at;
         double age_seconds = static_cast<double>(now - last_time);
 
@@ -83,22 +92,26 @@ int cmd_gc(const Options& options, Store& store) {
         }
 
         if (eligible) {
+            uint64_t bytes = fsview::capsule_apparent_size(*capsule);
+
+            if (!options.dry_run) {
+                try {
+                    std::unique_ptr<Capsule> locked_capsule = store.open(spec.id, true);
+                    store.destroy(*locked_capsule);
+                } catch (const Error& e) {
+                    log::warn("could not prune capsule " + spec.id + ": " + e.what());
+                    continue;
+                }
+            }
+
             PruneEntry entry;
             entry.id = spec.id;
             entry.name = spec.name;
             entry.status = to_string(capsule->state().status);
             entry.created_at = spec.created_at;
-            entry.bytes = fsview::capsule_apparent_size(*capsule);
-            total_reclaimed += entry.bytes;
+            entry.bytes = bytes;
+            total_reclaimed += bytes;
             to_prune.push_back(std::move(entry));
-
-            if (!options.dry_run) {
-                try {
-                    store.destroy(*capsule);
-                } catch (const Error& e) {
-                    log::warn("could not prune capsule " + spec.id + ": " + e.what());
-                }
-            }
         }
     }
 

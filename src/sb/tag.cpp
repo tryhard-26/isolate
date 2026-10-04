@@ -61,6 +61,18 @@ Membership check_membership(pid_t pid, const std::string& name) {
         return Membership::NotMember;
     }
 
+    // Sandboxed procs without mach-lookup filtering (e.g. system helpers)
+    // pass any query. Verify ungranted canary is refused first.
+    constexpr const char* kCanary = "dev.isolate.canary.never_allowed";
+    errno = 0;
+    int canary = sandbox_check(pid, "mach-lookup", kFilterGlobalName | kNoReport, kCanary);
+    if (canary == 0) {
+        return Membership::NotMember;
+    }
+    if (canary < 0 && errno == ESRCH) {
+        return Membership::Gone;
+    }
+
     errno = 0;
     int allowed = sandbox_check(pid, "mach-lookup", kFilterGlobalName | kNoReport,
                                 name.c_str());
